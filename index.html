@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>arcade</title>
+    <link rel="icon" href="data:,">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -36,6 +37,30 @@
             line-height: 1.6;
             margin-bottom: 2rem;
         }
+        .games {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            margin-bottom: 2rem;
+            text-align: left;
+        }
+        .games a {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 1rem;
+            background: #fff;
+            border: 1px solid #e5e5e5;
+            border-radius: 8px;
+            padding: 0.875rem 1rem;
+            text-decoration: none;
+            color: inherit;
+            transition: border-color 0.15s ease;
+        }
+        .games a:hover { border-color: #a3a3a3; }
+        .games .name { font-size: 1rem; font-weight: 500; }
+        .games .meta { font-size: 0.75rem; color: #a3a3a3; }
         .badge {
             display: inline-flex;
             align-items: center;
@@ -59,6 +84,14 @@
     <div class="container">
         <h1>arcade</h1>
         <p class="description">Retro browser games — tetris, snake, breakout, and whatever you dream up next.</p>
+        <ul class="games">
+            <li>
+                <a href="games/pong/">
+                    <span class="name">pong</span>
+                    <span class="meta">1 or 2 players · keyboard</span>
+                </a>
+            </li>
+        </ul>
         <span class="badge">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="3"/>
