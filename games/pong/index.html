@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>pong — arcade</title>
+    <link rel="icon" href="data:,">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: #fafafa;
+            color: #171717;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1.25rem;
+            padding: 1.5rem;
+        }
+        a { color: inherit; }
+        .back {
+            position: fixed;
+            top: 1.5rem;
+            left: 1.5rem;
+            font-size: 0.75rem;
+            color: #a3a3a3;
+            text-decoration: none;
+        }
+        .back:hover { color: #737373; }
+        .scoreboard {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            align-items: center;
+            gap: 1.5rem;
+            width: min(100%, 800px);
+        }
+        .side { display: flex; flex-direction: column; gap: 0.125rem; }
+        .side.right { text-align: right; }
+        .side .who {
+            font-size: 0.75rem;
+            font-weight: 500;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: #a3a3a3;
+        }
+        .side .points {
+            font-size: 2.5rem;
+            font-weight: 600;
+            letter-spacing: -0.03em;
+            font-variant-numeric: tabular-nums;
+            line-height: 1;
+        }
+        .middle {
+            text-align: center;
+            font-size: 0.75rem;
+            color: #a3a3a3;
+            line-height: 1.5;
+        }
+        .middle .target { color: #737373; }
+        canvas {
+            width: min(100%, 800px);
+            aspect-ratio: 8 / 5;
+            height: auto;
+            display: block;
+            background: #0a0a0a;
+            border: 1px solid #e5e5e5;
+            border-radius: 6px;
+            touch-action: none;
+        }
+        .message {
+            font-size: 0.875rem;
+            color: #737373;
+            min-height: 1.25rem;
+            text-align: center;
+        }
+        .keys {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 0.375rem 1rem;
+            font-size: 0.75rem;
+            color: #a3a3a3;
+            width: min(100%, 800px);
+        }
+        .keys b {
+            font-weight: 500;
+            color: #737373;
+            border: 1px solid #e5e5e5;
+            border-radius: 4px;
+            padding: 0.0625rem 0.3125rem;
+            margin-right: 0.3125rem;
+            background: #fff;
+        }
+        footer { font-size: 0.75rem; color: #d4d4d4; }
+        #selftest-out {
+            display: none;
+            width: min(100%, 800px);
+            font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+            white-space: pre-wrap;
+            background: #fff;
+            border: 1px solid #e5e5e5;
+            border-radius: 6px;
+            padding: 0.75rem;
+            color: #171717;
+        }
+    </style>
+</head>
+<body>
+    <a class="back" href="../../">&larr; arcade</a>
+
+    <div class="scoreboard">
+        <div class="side left">
+            <span class="who" id="left-name">You</span>
+            <span class="points" id="left-score">0</span>
+        </div>
+        <div class="middle">
+            <div class="target">first to <span id="target">7</span></div>
+            <div id="record">&nbsp;</div>
+        </div>
+        <div class="side right">
+            <span class="who" id="right-name">CPU</span>
+            <span class="points" id="right-score">0</span>
+        </div>
+    </div>
+
+    <canvas id="court" width="800" height="500" aria-label="Pong court"></canvas>
+
+    <div class="message" id="message">Press Space to start</div>
+
+    <div class="keys">
+        <span><b>W</b><b>S</b> left paddle</span>
+        <span><b>&uarr;</b><b>&darr;</b> right paddle (or left, in one-player)</span>
+        <span><b>1</b><b>2</b> players</span>
+        <span><b>D</b> difficulty</span>
+        <span><b>P</b> pause</span>
+        <span><b>R</b> reset</span>
+        <span><b>M</b> sound</span>
+    </div>
+
+    <pre id="selftest-out"></pre>
+
+    <footer>Powered by Bloom</footer>
+
+<script>
+(() => {
+    'use strict';
+
+    // ---------------------------------------------------------------- config
+    const CFG = {
+        W: 800, H: 500,              // court units (canvas is scaled to fit)
+        PADDLE_W: 12, PADDLE_H: 84,
+        INSET: 28,                   // gap between wall and paddle
+        PADDLE_SPEED: 420,           // units/second
+        BALL_R: 8,
+        SPEED_MIN: 330,              // serve speed, units/second
+        SPEED_MAX: 1450,             // rally ceiling: well past what a paddle covers
+        SPEED_GAIN: 55,              // added per paddle hit, so a rally has to break
+        MAX_ANGLE: Math.PI / 3,      // 60deg off the paddle edge
+        MIN_ANGLE: Math.PI / 30,     // 6deg: a dead-centre hit still leans, so two
+                                     // still paddles cannot rally flat forever
+        SERVE_ANGLE: Math.PI / 9,    // 20deg spread on the serve
+        WIN: 7,
+        SERVE_DELAY: 1.1,            // seconds the ball waits at centre
+        STEP: 1 / 120,               // fixed physics step
+        MAX_FRAME: 0.25,             // never simulate more than this per frame
+    };
+
+    // Ball-centre x where the ball touches each paddle's inner face.
+    const LEFT_FACE = CFG.INSET + CFG.PADDLE_W + CFG.BALL_R;
+    const RIGHT_FACE = CFG.W - CFG.INSET - CFG.PADDLE_W - CFG.BALL_R;
+    const PADDLE_MAX_Y = CFG.H - CFG.PADDLE_H;
+
+    const LEVELS = [
+        { name: 'easy',   speed: 0.62, dead: 14, err: 0.16 },
+        { name: 'normal', speed: 0.84, dead: 7,  err: 0.07 },
+        { name: 'hard',   speed: 1.0,  dead: 3,  err: 0.02 },
+    ];
+
+    // The self-test plays whole matches, so it keeps its own saved record and
+    // leaves a real player's wins and losses alone.
+    const SELFTEST = new URLSearchParams(location.search).has('selftest');
+    const STORE_KEY = 'arcade.pong.v1' + (SELFTEST ? '.selftest' : '');
+
+    // ------------------------------------------------------------------ dom
+    const canvas = document.getElementById('court');
+    const ctx = canvas.getContext('2d');
+    const el = {
+        leftName: document.getElementById('left-name'),
+        rightName: document.getElementById('right-name'),
+        leftScore: document.getElementById('left-score'),
+        rightScore: document.getElementById('right-score'),
+        target: document.getElementById('target'),
+        record: document.getElementById('record'),
+        message: document.getElementById('message'),
+    };
+    el.target.textContent = CFG.WIN;
+
+    // ----------------------------------------------------------------- state
+    const left = { y: (CFG.H - CFG.PADDLE_H) / 2, score: 0, flash: 0 };
+    const right = { y: (CFG.H - CFG.PADDLE_H) / 2, score: 0, flash: 0 };
+    const ball = { x: CFG.W / 2, y: CFG.H / 2, vx: 0, vy: 0, speed: CFG.SPEED_MIN };
+
+    const game = {
+        state: 'menu',          // menu | serving | playing | paused | gameover
+        players: 1,
+        level: 1,               // index into LEVELS
+        serveDir: 1,            // +1 serves toward the right side
+        serveTimer: 0,
+        rally: 0,
+        winner: '',
+        sound: true,
+        loop: true,             // rAF driving (tests turn this off)
+        aimError: 0,            // CPU's misread for the current rally
+    };
+
+    const record = { wins: 0, losses: 0, bestRally: 0 };
+    const trail = [];
+    const keys = Object.create(null);
+    let pointerY = null;        // mouse/touch takes over the left paddle
+    let rand = Math.random;
+
+    // ---------------------------------------------------------------- persist
+    function load() {
+        try {
+            const raw = localStorage.getItem(STORE_KEY);
+            if (!raw) return;
+            const saved = JSON.parse(raw);
+            record.wins = saved.wins | 0;
+            record.losses = saved.losses | 0;
+            record.bestRally = saved.bestRally | 0;
+            if (typeof saved.sound === 'boolean') game.sound = saved.sound;
+            if (Number.isInteger(saved.level) && LEVELS[saved.level]) game.level = saved.level;
+        } catch (err) { /* private mode, corrupt value: play on with defaults */ }
+    }
+
+    function save() {
+        try {
+            localStorage.setItem(STORE_KEY, JSON.stringify({
+                wins: record.wins,
+                losses: record.losses,
+                bestRally: record.bestRally,
+                sound: game.sound,
+                level: game.level,
+            }));
+        } catch (err) { /* nothing to do */ }
+    }
+
+    // ------------------------------------------------------------------ sound
+    let audio = null;
+    function blip(freq, length) {
+        if (!game.sound) return;
+        try {
+            const Ctor = window.AudioContext || window.webkitAudioContext;
+            if (!Ctor) return;
+            if (!audio) audio = new Ctor();
+            if (audio.state === 'suspended') audio.resume();
+            const osc = audio.createOscillator();
+            const gain = audio.createGain();
+            osc.type = 'square';
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.05, audio.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + length);
+            osc.connect(gain).connect(audio.destination);
+            osc.start();
+            osc.stop(audio.currentTime + length);
+        } catch (err) { /* audio is a nicety, never a blocker */ }
+    }
+
+    // ------------------------------------------------------------------ utils
+    const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+
+    // Keep a little angle on every shot. A perfectly flat ball between two
+    // centred paddles is a rally neither side ever has to move for, and no
+    // amount of speeding it up breaks that.
+    function leaned(angle, bias) {
+        if (Math.abs(angle) >= CFG.MIN_ANGLE) return angle;
+        const lean = bias !== 0 ? Math.sign(bias) : (rand() < 0.5 ? -1 : 1);
+        return lean * CFG.MIN_ANGLE;
+    }
+
+    // "You wins" reads badly, and only the one-player left side says "You".
+    function winLine() {
+        return game.winner === 'You' ? 'You win' : game.winner + ' wins';
+    }
+
+    function sideName(side) {
+        if (side === 'left') return game.players === 2 ? 'Player 1' : 'You';
+        return game.players === 2 ? 'Player 2' : 'CPU';
+    }
+
+    // ------------------------------------------------------------------ rules
+    function centrePaddles() {
+        left.y = right.y = (CFG.H - CFG.PADDLE_H) / 2;
+    }
+
+    function parkBall() {
+        ball.x = CFG.W / 2;
+        ball.y = CFG.H / 2;
+        ball.vx = 0;
+        ball.vy = 0;
+    }
+
+    function serve(dir) {
+        game.serveDir = dir;
+        game.serveTimer = CFG.SERVE_DELAY;
+        game.rally = 0;
+        game.aimError = (rand() * 2 - 1) * LEVELS[game.level].err * CFG.H;
+        ball.speed = CFG.SPEED_MIN;
+        parkBall();
+        ball.y = CFG.H / 2 + (rand() * 2 - 1) * (CFG.H * 0.15);
+        trail.length = 0;
+        game.state = 'serving';
+    }
+
+    function launch() {
+        const angle = leaned((rand() * 2 - 1) * CFG.SERVE_ANGLE, rand() - 0.5);
+        ball.vx = game.serveDir * ball.speed * Math.cos(angle);
+        ball.vy = ball.speed * Math.sin(angle);
+        game.state = 'playing';
+        blip(320, 0.05);
+    }
+
+    function newMatch() {
+        left.score = 0;
+        right.score = 0;
+        left.flash = right.flash = 0;
+        game.winner = '';
+        centrePaddles();
+        serve(rand() < 0.5 ? -1 : 1);
+    }
+
+    function start() {
+        if (game.state === 'menu' || game.state === 'gameover') newMatch();
+        else if (game.state === 'serving') game.serveTimer = 0;
+        else if (game.state === 'paused') game.state = 'playing';
+    }
+
+    function setPlayers(n) {
+        const next = n === 2 ? 2 : 1;
+        if (next === game.players && game.state !== 'menu') return;
+        game.players = next;
+        pointerY = null;
+        newMatch();
+        syncHud();
+    }
+
+    function cycleLevel() {
+        game.level = (game.level + 1) % LEVELS.length;
+        game.aimError = (rand() * 2 - 1) * LEVELS[game.level].err * CFG.H;
+        save();
+        syncHud();
+    }
+
+    function togglePause() {
+        if (game.state === 'playing' || game.state === 'serving') game.state = 'paused';
+        else if (game.state === 'paused') game.state = 'playing';
+    }
+
+    function point(scorer) {
+        const winnerSide = scorer === left ? 'left' : 'right';
+        scorer.score += 1;
+        if (game.rally > record.bestRally) record.bestRally = game.rally;
+        blip(scorer === left ? 520 : 180, 0.12);
+
+        if (scorer.score >= CFG.WIN) {
+            game.state = 'gameover';
+            game.winner = sideName(winnerSide);
+            if (game.players === 1) {
+                if (winnerSide === 'left') record.wins += 1; else record.losses += 1;
+            }
+            parkBall();
+            save();
+        } else {
+            // The ball goes back out toward whoever just scored.
+            serve(winnerSide === 'left' ? 1 : -1);
+            save();
+        }
+        syncHud();
+    }
+
+    // ----------------------------------------------------------------- motion
+    function movePaddles(dt) {
+        const step = CFG.PADDLE_SPEED * dt;
+
+        // Left paddle: W/S always; arrows too when there is no second human.
+        let dir = 0;
+        if (keys.w) dir -= 1;
+        if (keys.s) dir += 1;
+        if (game.players === 1) {
+            if (keys.up) dir -= 1;
+            if (keys.down) dir += 1;
+        }
+        if (dir !== 0) {
+            pointerY = null;
+            left.y = clamp(left.y + dir * step, 0, PADDLE_MAX_Y);
+        } else if (pointerY !== null) {
+            const want = clamp(pointerY - CFG.PADDLE_H / 2, 0, PADDLE_MAX_Y);
+            left.y = clamp(want, left.y - step * 2.2, left.y + step * 2.2);
+        }
+
+        if (game.players === 2) {
+            let rdir = 0;
+            if (keys.up) rdir -= 1;
+            if (keys.down) rdir += 1;
+            if (rdir !== 0) right.y = clamp(right.y + rdir * step, 0, PADDLE_MAX_Y);
+        } else {
+            cpuMove(dt);
+        }
+    }
+
+    // Where the ball will cross the CPU's face, folding off the walls.
+    function cpuTarget() {
+        if (ball.vx <= 0) return CFG.H / 2;
+        const span = CFG.H - 2 * CFG.BALL_R;
+        const time = (RIGHT_FACE - ball.x) / ball.vx;
+        if (!(time > 0) || span <= 0) return ball.y;
+        let y = (ball.y - CFG.BALL_R) + ball.vy * time;
+        y = ((y % (2 * span)) + 2 * span) % (2 * span);     // fold into one bounce cycle
+        if (y > span) y = 2 * span - y;
+        return y + CFG.BALL_R;
+    }
+
+    function cpuMove(dt) {
+        const level = LEVELS[game.level];
+        const aim = ball.vx > 0 ? cpuTarget() + game.aimError : CFG.H / 2;
+        const target = clamp(aim, CFG.BALL_R, CFG.H - CFG.BALL_R);
+        const centre = right.y + CFG.PADDLE_H / 2;
+        const delta = target - centre;
+        if (Math.abs(delta) <= level.dead) return;
+        const step = CFG.PADDLE_SPEED * level.speed * dt;
+        right.y = clamp(right.y + clamp(delta, -step, step), 0, PADDLE_MAX_Y);
+    }
+
+    // Swept test against one paddle face. Catches the ball at any speed, so a
+    // fast rally can never tunnel through a paddle.
+    function hitPaddle(paddle, dir, fromX, fromY) {
+        const face = dir > 0 ? LEFT_FACE : RIGHT_FACE;
+        const travelled = fromX - ball.x;
+        const t = travelled !== 0 ? clamp((fromX - face) / travelled, 0, 1) : 0;
+        const yAt = fromY + (ball.y - fromY) * t;
+        const reach = CFG.PADDLE_H / 2 + CFG.BALL_R;
+        const offset = (yAt - (paddle.y + CFG.PADDLE_H / 2)) / reach;
+        if (Math.abs(offset) > 1) return false;
+
+        ball.speed = Math.min(CFG.SPEED_MAX, ball.speed + CFG.SPEED_GAIN);
+        const angle = leaned(clamp(offset, -1, 1) * CFG.MAX_ANGLE, offset);
+        ball.vx = dir * ball.speed * Math.cos(angle);
+        ball.vy = ball.speed * Math.sin(angle);
+        ball.x = face;
+        ball.y = clamp(yAt, CFG.BALL_R, CFG.H - CFG.BALL_R);
+        paddle.flash = 1;
+        game.rally += 1;
+        blip(440 + Math.min(game.rally, 12) * 20, 0.04);
+        return true;
+    }
+
+    function physics(dt) {
+        left.flash = Math.max(0, left.flash - dt * 5);
+        right.flash = Math.max(0, right.flash - dt * 5);
+
+        if (game.state === 'paused' || game.state === 'gameover' || game.state === 'menu') return;
+
+        movePaddles(dt);
+
+        if (game.state === 'serving') {
+            game.serveTimer -= dt;
+            if (game.serveTimer <= 0) launch();
+            return;
+        }
+
+        const fromX = ball.x;
+        const fromY = ball.y;
+        ball.x += ball.vx * dt;
+        ball.y += ball.vy * dt;
+
+        if (ball.vx < 0 && fromX >= LEFT_FACE && ball.x <= LEFT_FACE) {
+            hitPaddle(left, 1, fromX, fromY);
+        } else if (ball.vx > 0 && fromX <= RIGHT_FACE && ball.x >= RIGHT_FACE) {
+            hitPaddle(right, -1, fromX, fromY);
+        }
+
+        // Top and bottom walls: reflect the overshoot, then pin inside the court.
+        if (ball.y < CFG.BALL_R) {
+            ball.y = 2 * CFG.BALL_R - ball.y;
+            ball.vy = Math.abs(ball.vy);
+            blip(260, 0.03);
+        } else if (ball.y > CFG.H - CFG.BALL_R) {
+            ball.y = 2 * (CFG.H - CFG.BALL_R) - ball.y;
+            ball.vy = -Math.abs(ball.vy);
+            blip(260, 0.03);
+        }
+        ball.y = clamp(ball.y, CFG.BALL_R, CFG.H - CFG.BALL_R);
+
+        trail.push(ball.x, ball.y);
+        if (trail.length > 16) trail.splice(0, trail.length - 16);
+
+        if (ball.x < -CFG.BALL_R) point(right);
+        else if (ball.x > CFG.W + CFG.BALL_R) point(left);
+    }
+
+    function advance(seconds) {
+        let budget = Math.min(seconds, CFG.MAX_FRAME);
+        while (budget > 0) {
+            const dt = Math.min(CFG.STEP, budget);
+            physics(dt);
+            budget -= dt;
+        }
+    }
+
+    // ------------------------------------------------------------------- hud
+    function syncHud() {
+        el.leftName.textContent = sideName('left');
+        el.rightName.textContent = sideName('right');
+        el.leftScore.textContent = left.score;
+        el.rightScore.textContent = right.score;
+
+        const bits = [];
+        if (game.players === 1) {
+            bits.push(LEVELS[game.level].name);
+            bits.push(record.wins + 'W &middot; ' + record.losses + 'L');
+        } else {
+            bits.push('two players');
+        }
+        if (record.bestRally > 0) bits.push('best rally ' + record.bestRally);
+        if (!game.sound) bits.push('muted');
+        el.record.innerHTML = bits.join(' &nbsp;·&nbsp; ');
+
+        const messages = {
+            menu: 'Press Space to start',
+            serving: game.rally === 0 && left.score + right.score === 0 ? 'Here it comes' : 'Serving',
+            playing: 'Rally ' + game.rally,
+            paused: 'Paused — Space or P to resume',
+            gameover: winLine() + ' — Space to play again',
+        };
+        el.message.textContent = messages[game.state] || '';
+    }
+
+    // ------------------------------------------------------------------ draw
+    let cssW = CFG.W;
+    function fitCanvas() {
+        const dpr = window.devicePixelRatio || 1;
+        cssW = canvas.clientWidth || CFG.W;
+        const wantW = Math.round(cssW * dpr);
+        const wantH = Math.round(cssW * (CFG.H / CFG.W) * dpr);
+        if (canvas.width !== wantW || canvas.height !== wantH) {
+            canvas.width = wantW;
+            canvas.height = wantH;
+        }
+    }
+
+    function overlay(title, lines) {
+        ctx.fillStyle = 'rgba(10, 10, 10, 0.72)';
+        ctx.fillRect(0, 0, CFG.W, CFG.H);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fafafa';
+        ctx.font = '600 44px Inter, system-ui, sans-serif';
+        ctx.fillText(title, CFG.W / 2, CFG.H / 2 - 14);
+        ctx.font = '400 16px Inter, system-ui, sans-serif';
+        ctx.fillStyle = '#a3a3a3';
+        lines.forEach((line, i) => {
+            ctx.fillText(line, CFG.W / 2, CFG.H / 2 + 24 + i * 24);
+        });
+    }
+
+    function draw() {
+        fitCanvas();
+        const scale = canvas.width / CFG.W;
+        ctx.setTransform(scale, 0, 0, scale, 0, 0);
+
+        ctx.fillStyle = '#0a0a0a';
+        ctx.fillRect(0, 0, CFG.W, CFG.H);
+
+        ctx.strokeStyle = '#262626';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([10, 12]);
+        ctx.beginPath();
+        ctx.moveTo(CFG.W / 2, 8);
+        ctx.lineTo(CFG.W / 2, CFG.H - 8);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        for (let i = 0; i < trail.length; i += 2) {
+            const k = (i / 2 + 1) / (trail.length / 2);
+            ctx.globalAlpha = 0.1 * k;
+            ctx.beginPath();
+            ctx.arc(trail[i], trail[i + 1], CFG.BALL_R * (0.5 + k * 0.5), 0, Math.PI * 2);
+            ctx.fillStyle = '#fafafa';
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+
+        drawPaddle(CFG.INSET, left);
+        drawPaddle(CFG.W - CFG.INSET - CFG.PADDLE_W, right);
+
+        if (game.state !== 'menu' && game.state !== 'gameover') {
+            ctx.fillStyle = '#fafafa';
+            ctx.beginPath();
+            ctx.arc(ball.x, ball.y, CFG.BALL_R, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        if (game.state === 'serving') {
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#525252';
+            ctx.font = '600 20px Inter, system-ui, sans-serif';
+            ctx.fillText(Math.max(1, Math.ceil(game.serveTimer)), CFG.W / 2, 76);
+        }
+
+        if (game.state === 'menu') {
+            overlay('PONG', [
+                '1  one player   ·   2  two players',
+                'Space to start   ·   D for ' + LEVELS[(game.level + 1) % LEVELS.length].name,
+            ]);
+        } else if (game.state === 'paused') {
+            overlay('Paused', ['Space or P to resume', 'R starts a new match']);
+        } else if (game.state === 'gameover') {
+            overlay(winLine(), [
+                left.score + ' — ' + right.score,
+                'Space to play again',
+            ]);
+        }
+    }
+
+    function drawPaddle(x, paddle) {
+        ctx.fillStyle = paddle.flash > 0 ? '#ffffff' : '#e5e5e5';
+        ctx.fillRect(x, paddle.y, CFG.PADDLE_W, CFG.PADDLE_H);
+        if (paddle.flash > 0) {
+            ctx.globalAlpha = paddle.flash * 0.35;
+            ctx.fillRect(x - 4, paddle.y - 4, CFG.PADDLE_W + 8, CFG.PADDLE_H + 8);
+            ctx.globalAlpha = 1;
+        }
+    }
+
+    // ------------------------------------------------------------------ input
+    const KEYMAP = {
+        w: 'w', W: 'w', s: 's', S: 's',
+        ArrowUp: 'up', ArrowDown: 'down',
+    };
+    const SWALLOW = ['ArrowUp', 'ArrowDown', ' ', 'Spacebar'];
+
+    window.addEventListener('keydown', (e) => {
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        if (SWALLOW.indexOf(e.key) !== -1) e.preventDefault();
+
+        const held = KEYMAP[e.key];
+        if (held) { keys[held] = true; return; }
+        if (e.repeat) return;
+
+        switch (e.key) {
+            case ' ':
+            case 'Spacebar':
+            case 'Enter':
+                start();
+                break;
+            case 'p': case 'P': case 'Escape':
+                togglePause();
+                break;
+            case 'r': case 'R':
+                newMatch();
+                break;
+            case 'm': case 'M':
+                game.sound = !game.sound;
+                save();
+                break;
+            case '1':
+                setPlayers(1);
+                break;
+            case '2':
+                setPlayers(2);
+                break;
+            case 'd': case 'D':
+                if (game.players === 1) cycleLevel();
+                break;
+            default:
+                return;
+        }
+        syncHud();
+    });
+
+    window.addEventListener('keyup', (e) => {
+        const held = KEYMAP[e.key];
+        if (held) keys[held] = false;
+    });
+
+    window.addEventListener('blur', () => {
+        keys.w = keys.s = keys.up = keys.down = false;
+        if (game.state === 'playing') game.state = 'paused';
+        syncHud();
+    });
+
+    function pointerTo(e) {
+        const box = canvas.getBoundingClientRect();
+        if (!box.height) return;
+        pointerY = ((e.clientY - box.top) / box.height) * CFG.H;
+    }
+    canvas.addEventListener('pointerdown', (e) => {
+        pointerTo(e);
+        if (game.state === 'menu' || game.state === 'gameover') start();
+        else if (game.state === 'paused') game.state = 'playing';
+        syncHud();
+    });
+    canvas.addEventListener('pointermove', (e) => {
+        if (e.pointerType === 'mouse' && e.buttons === 0 && game.state === 'menu') return;
+        pointerTo(e);
+    });
+    canvas.addEventListener('pointerleave', () => { pointerY = null; });
+
+    // ------------------------------------------------------------------- loop
+    // Each run of the loop carries its own generation, so a restart can never
+    // leave two frame callbacks alive and run the game at double speed.
+    let loopGen = 0;
+    let hudState = '';
+    function runLoop() {
+        const gen = loopGen += 1;
+        let last = 0;
+        game.loop = true;
+        const tick = (now) => {
+            if (!game.loop || gen !== loopGen) return;
+            if (!last) last = now;
+            advance((now - last) / 1000);
+            last = now;
+            draw();
+            const stamp = game.state + '|' + game.rally + '|' + left.score + '|' + right.score;
+            if (stamp !== hudState) { hudState = stamp; syncHud(); }
+            requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+    }
+
+    window.addEventListener('resize', draw);
+
+    load();
+    syncHud();
+    draw();
+    runLoop();
+
+    // -------------------------------------------------- test / debug handle
+    // Used by selftest.js (?selftest=1) and handy from the console.
+    window.pong = {
+        CFG, LEVELS, LEFT_FACE, RIGHT_FACE, STORE_KEY,
+        get state() { return game.state; },
+        get score() { return { left: left.score, right: right.score }; },
+        get ball() { return { x: ball.x, y: ball.y, vx: ball.vx, vy: ball.vy, speed: ball.speed }; },
+        get paddles() { return { left: left.y, right: right.y }; },
+        get rally() { return game.rally; },
+        get players() { return game.players; },
+        get winner() { return game.winner; },
+        advance,
+        start, newMatch, setPlayers, togglePause, cycleLevel, serve, draw, syncHud,
+        stopLoop() { game.loop = false; loopGen += 1; },
+        startLoop() { runLoop(); },
+        silence() { game.sound = false; },
+        setRandom(fn) { rand = fn; },
+        setKey(name, down) { keys[name] = !!down; },
+        setPointer(y) { pointerY = y; },
+        setBall(x, y, vx, vy) {
+            ball.x = x; ball.y = y; ball.vx = vx; ball.vy = vy;
+            ball.speed = Math.hypot(vx, vy) || CFG.SPEED_MIN;
+            trail.length = 0;
+        },
+        setPaddles(ly, ry) {
+            left.y = clamp(ly, 0, PADDLE_MAX_Y);
+            right.y = clamp(ry, 0, PADDLE_MAX_Y);
+        },
+        setScore(l, r) { left.score = l; right.score = r; syncHud(); },
+        setState(s) { game.state = s; },
+        setBallSpeed(s) { ball.speed = s; },
+    };
+
+    if (SELFTEST) {
+        const tag = document.createElement('script');
+        tag.src = 'selftest.js';
+        document.body.appendChild(tag);
+    }
+})();
+</script>
+</body>
+</html>
